@@ -221,11 +221,11 @@ final class LVP_Commercial_Foundation {
 		}
 		global $wpdb;
 		$table = $wpdb->prefix . 'lvp_videos';
-		$video = $wpdb->get_row( $wpdb->prepare( "SELECT id,conversion_status FROM {$table} WHERE id = %d", $video_id ) );
+		$video = $wpdb->get_row( $wpdb->prepare( "SELECT id,conversion_status,updated_at FROM {$table} WHERE id = %d", $video_id ) );
 		if ( ! $video ) {
 			self::redirect_library( 'invalid_video' );
 		}
-		if ( 'processing' === $video->conversion_status ) {
+		if ( 'processing' === $video->conversion_status && strtotime( $video->updated_at ) > ( time() - 1800 ) ) {
 			self::redirect_library( 'conversion_running' );
 		}
 		$updated = $wpdb->update( $table, array( 'conversion_status' => 'queued', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $video_id ), array( '%s', '%s' ), array( '%d' ) );
