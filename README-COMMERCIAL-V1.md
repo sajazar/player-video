@@ -13,6 +13,7 @@ This branch adds the first host-agnostic foundation without deleting the existin
 - Adds a short-lived HMAC-signed playback token (5-minute default; maximum 10 minutes).
 - Adds a protected `admin-post.php` media endpoint that rechecks login, token signature/expiry, and WooCommerce entitlement for the manifest, each HLS segment, and the AES-128 key.
 - Adds `[lvp_secure_video id="VIDEO_ID"]` shortcode with HLS.js for browsers that do not natively play HLS.
+- Renews short-lived playback tokens every 3 minutes through an authenticated AJAX endpoint that checks the WordPress nonce and revalidates the current WooCommerce entitlement. HLS.js requests use the latest token; native-HLS fallback refreshes its playlist URL and attempts to restore playback position.
 - Derives a per-install signing secret from the site's WordPress salts; it does not ship a fixed secret.
 - Adds Settings → وضعیت پلیر امن with a basic host capability report.
 - Detects FFmpeg and Action Scheduler availability where the host permits it.
@@ -25,7 +26,7 @@ The video library accepts MP4 files and can queue HLS conversion with FFmpeg + A
 
 The next required implementation before commercial release is:
 1. Confirm FFmpeg actually generates encrypted playlists/segments on the target host, and test cleanup/retry behavior after failed conversions.
-2. Implement playback-token renewal and test long-video playback; the current token is short-lived and does not yet auto-renew, so long videos may stop requesting new segments after expiry.
+2. Test automatic playback-token renewal on long videos in Chrome/Firefox (HLS.js) and Safari native HLS, including seek operations and recovery if renewal fails.
 3. Run PHP syntax checks and test browser playback on Safari and Chrome/Firefox (HLS.js), including seek operations.
 4. Test unauthorized, logged-out, expired-token, refunded/cancelled-order, missing-key, and missing-segment cases.
 5. Confirm direct HTTP access to the original MP4, HLS directory, and key file returns 403/404 on Apache, Nginx, and shared hosting; PHP endpoint checks alone cannot block direct web-server access if private storage is exposed.
