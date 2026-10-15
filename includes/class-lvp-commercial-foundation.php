@@ -355,7 +355,7 @@ final class LVP_Commercial_Foundation {
 			return;
 		}
 		@chmod( $key_path, 0600 );
-		$key_info_contents = "lvp-key://" . $video_id . "\\n" . $key_path . "\\n" . $iv . "\\n";
+		$key_info_contents = "lvp-key://" . $video_id . "\n" . $key_path . "\n" . $iv . "\n";
 		if ( false === @file_put_contents( $key_info, $key_info_contents, LOCK_EX ) ) {
 			@unlink( $key_path );
 			self::set_conversion_status( $video_id, 'failed' );
