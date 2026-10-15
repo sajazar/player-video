@@ -17,6 +17,7 @@ final class LVP_Commercial_Foundation {
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
 		add_action( 'admin_post_lvp_upload_video', array( __CLASS__, 'handle_video_upload' ) );
 		add_action( 'admin_post_lvp_queue_conversion', array( __CLASS__, 'handle_queue_conversion' ) );
+		add_shortcode( 'lvp_secure_video', array( __CLASS__, 'secure_video_placeholder' ) );
 		add_action( 'lvp_convert_video', array( __CLASS__, 'convert_video' ), 10, 1 );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
 	}
@@ -227,6 +228,90 @@ final class LVP_Commercial_Foundation {
 		self::redirect_library( 'conversion_queued' );
 	}
 
+
+	/**
+	 * Check entitlement server-side. Secure playback requires a logged-in account
+	 * and a paid WooCommerce order for at least one product linked to this video.
+	 */
+	public static function user_can_access_video( $video_id, $user_id = 0 ) {
+		$video_id = absint( $video_id );
+		$user_id  = $user_id ? absint( $user_id ) : get_current_user_id();
+		if ( ! $video_id || ! $user_id || ! function_exists( 'wc_get_orders' ) ) {
+			return false;
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT product_ids,status,conversion_status FROM {$table} WHERE id = %d", $video_id ) );
+		if ( ! $row || 'converted' !== $row->status || 'complete' !== $row->conversion_status ) {
+			return false;
+		}
+		$product_ids = json_decode( (string) $row->product_ids, true );
+		if ( ! is_array( $product_ids ) || ! $product_ids ) {
+			return false;
+		}
+		$orders = wc_get_orders( array(
+			'customer_id' => $user_id,
+			'status'      => array( 'processing', 'completed' ),
+			'limit'       => -1,
+			'return'      => 'objects',
+		) );
+		foreach ( $orders as $order ) {
+			foreach ( $order->get_items() as $item ) {
+				$ordered_product_id = absint( $item->get_product_id() );
+				$variation_id = absint( $item->get_variation_id() );
+				if ( in_array( $ordered_product_id, array_map( 'absint', $product_ids ), true ) || ( $variation_id && in_array( $variation_id, array_map( 'absint', $product_ids ), true ) ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Create/verify short-lived signed playback claims. Tokens are not yet exposed
+	 * to a media endpoint in this foundation stage.
+	 */
+	public static function create_playback_token( $video_id, $user_id, $lifetime = 300 ) {
+		$video_id = absint( $video_id );
+		$user_id  = absint( $user_id );
+		$expires  = time() + min( 600, max( 30, absint( $lifetime ) ) );
+		if ( ! $video_id || ! $user_id || ! self::user_can_access_video( $video_id, $user_id ) ) {
+			return '';
+		}
+		$payload = $video_id . '|' . $user_id . '|' . $expires;
+		$signature = hash_hmac( 'sha256', $payload, self::signing_secret() );
+		return rtrim( strtr( base64_encode( $payload . '|' . $signature ), '+/', '-_' ), '=' );
+	}
+
+	public static function verify_playback_token( $token, $video_id, $user_id ) {
+		$decoded = base64_decode( strtr( (string) $token, '-_', '+/' ), true );
+		if ( false === $decoded ) {
+			return false;
+		}
+		$parts = explode( '|', $decoded );
+		if ( 4 !== count( $parts ) ) {
+			return false;
+		}
+		list( $token_video, $token_user, $expires, $signature ) = $parts;
+		if ( absint( $token_video ) !== absint( $video_id ) || absint( $token_user ) !== absint( $user_id ) || absint( $expires ) < time() ) {
+			return false;
+		}
+		$payload = absint( $token_video ) . '|' . absint( $token_user ) . '|' . absint( $expires );
+		return hash_equals( hash_hmac( 'sha256', $payload, self::signing_secret() ), (string) $signature );
+	}
+
+	public static function secure_video_placeholder( $atts ) {
+		$atts = shortcode_atts( array( 'id' => 0 ), $atts, 'lvp_secure_video' );
+		$video_id = absint( $atts['id'] );
+		if ( ! is_user_logged_in() ) {
+			return '<p class="lvp-access-message">برای مشاهده این ویدئو ابتدا وارد حساب کاربری خود شوید.</p>';
+		}
+		if ( ! self::user_can_access_video( $video_id, get_current_user_id() ) ) {
+			return '<p class="lvp-access-message">دسترسی به این ویدئو تأیید نشد؛ لطفاً خرید دوره و وضعیت سفارش خود را بررسی کنید.</p>';
+		}
+		return '<p class="lvp-access-message">خرید شما تأیید شد؛ مسیر پخش امن هنوز در حال تکمیل است و این ویدئو فعلاً پخش نمی‌شود.</p>';
+	}
+
 	public static function convert_video( $video_id ) {
 		$video_id = absint( $video_id );
 		if ( ! $video_id || ! function_exists( 'exec' ) ) {
@@ -261,15 +346,33 @@ final class LVP_Commercial_Foundation {
 		}
 		$playlist = trailingslashit( $out_dir ) . 'index.m3u8';
 		$segments = trailingslashit( $out_dir ) . 'segment_%05d.ts';
-		$command = escapeshellarg( $ffmpeg ) . ' -nostdin -y -i ' . escapeshellarg( $source ) . ' -c:v h264 -c:a aac -hls_time 6 -hls_playlist_type vod -hls_segment_filename ' . escapeshellarg( $segments ) . ' ' . escapeshellarg( $playlist ) . ' 2>&1';
+		$key_path = trailingslashit( $base ) . 'hls-' . $video_id . '.key';
+		$key_info = trailingslashit( $out_dir ) . 'keyinfo.tmp';
+		$key = function_exists( 'random_bytes' ) ? random_bytes( 16 ) : false;
+		$iv = function_exists( 'random_bytes' ) ? bin2hex( random_bytes( 16 ) ) : '';
+		if ( false === $key || false === @file_put_contents( $key_path, $key, LOCK_EX ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		@chmod( $key_path, 0600 );
+		$key_info_contents = "lvp-key://" . $video_id . "\\n" . $key_path . "\\n" . $iv . "\\n";
+		if ( false === @file_put_contents( $key_info, $key_info_contents, LOCK_EX ) ) {
+			@unlink( $key_path );
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		@chmod( $key_info, 0600 );
+		$command = escapeshellarg( $ffmpeg ) . ' -nostdin -y -i ' . escapeshellarg( $source ) . ' -c:v h264 -c:a aac -hls_time 6 -hls_playlist_type vod -hls_key_info_file ' . escapeshellarg( $key_info ) . ' -hls_segment_filename ' . escapeshellarg( $segments ) . ' ' . escapeshellarg( $playlist ) . ' 2>&1';
 		$output = array();
 		$status = 1;
 		@exec( $command, $output, $status );
-		if ( 0 !== $status || ! is_file( $playlist ) || filesize( $playlist ) < 20 ) {
+		@unlink( $key_info );
+		if ( 0 !== $status || ! is_file( $playlist ) || filesize( $playlist ) < 20 || ! is_file( $key_path ) || filesize( $key_path ) !== 16 ) {
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
 		@chmod( $playlist, 0640 );
+		// The manifest's lvp-key:// URI is an internal marker; a future authorized endpoint must rewrite it.
 		foreach ( glob( trailingslashit( $out_dir ) . 'segment_*.ts' ) as $segment ) {
 			@chmod( $segment, 0640 );
 		}
