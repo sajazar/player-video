@@ -13,9 +13,16 @@ final class LVP_Commercial_Foundation {
 	const PRIVATE_DIR = 'lvp-private';
 
 	public static function boot() {
+		add_action( 'plugins_loaded', array( __CLASS__, 'maybe_upgrade' ) );
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
 		add_action( 'admin_post_lvp_upload_video', array( __CLASS__, 'handle_video_upload' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
+	}
+
+	public static function maybe_upgrade() {
+		if ( get_option( 'lvp_commercial_db_version' ) !== self::DB_VERSION ) {
+			self::activate();
+		}
 	}
 
 	public static function activate() {
