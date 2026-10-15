@@ -9,7 +9,9 @@ This branch adds the first host-agnostic foundation without deleting the existin
 - Adds Action Scheduler-based FFmpeg HLS conversion when both are available.
 - Adds a database schema upgrade check for existing plugin installs.
 - Adds server-side WooCommerce entitlement checks for logged-in customers with processing/completed orders for linked products.
-- Adds a short-lived HMAC-signed playback-token foundation (5-minute default; maximum 10 minutes).
+- Adds a short-lived HMAC-signed playback token (5-minute default; maximum 10 minutes).
+- Adds a protected `admin-post.php` media endpoint that rechecks login, token signature/expiry, and WooCommerce entitlement for the manifest, each HLS segment, and the AES-128 key.
+- Adds `[lvp_secure_video id="VIDEO_ID"]` shortcode with HLS.js for browsers that do not natively play HLS.
 - Derives a per-install signing secret from the site's WordPress salts; it does not ship a fixed secret.
 - Adds Settings → وضعیت پلیر امن with a basic host capability report.
 - Detects FFmpeg and Action Scheduler availability where the host permits it.
@@ -17,14 +19,15 @@ This branch adds the first host-agnostic foundation without deleting the existin
 ## Important security status
 This is a foundation, not a complete secure streaming release. The legacy shortcode still outputs the supplied media URL directly. Do not treat public MP4 URLs as protected. Nginx and some managed/shared hosts do not honor .htaccess; a server-level access test is required before using the private directory for paid content.
 
-The video library accepts MP4 files and can queue HLS conversion with FFmpeg + Action Scheduler. Conversion now requests AES-128 HLS encryption and stores the 16-byte key in the private storage directory. The playlist contains an internal `lvp-key://` marker that must be rewritten by the future authorized key endpoint. **Encrypted output is still not authorized for playback**; no manifest/segment/key delivery endpoint is implemented yet. Do not publish the generated manifest, segments, or key. Uploaded originals and HLS output remain in the configured directory and must not be served directly.
+The video library accepts MP4 files and can queue HLS conversion with FFmpeg + Action Scheduler. Conversion now requests AES-128 HLS encryption and stores the 16-byte key in the private storage directory. The playlist contains an internal `lvp-key://` marker that must be rewritten by the future authorized key endpoint. The branch now includes a PHP endpoint that rewrites the internal key marker and serves the manifest, segments, and key only after rechecking the logged-in user, short-lived token, and current WooCommerce entitlement. Use `[lvp_secure_video id="VIDEO_ID"]` with the numeric ID shown in the video library. However, this is still **not a production security certification**: do not merge into `main` until PHP syntax, FFmpeg encryption, browser playback, expired-token denial, refunded-order denial, and direct-path denial are tested on the target host. The HLS key is delivered to the authorized browser because playback requires it; AES-128 HLS is not DRM and cannot prevent screen recording or determined extraction.
 
 The next required implementation before commercial release is:
 1. Admin video library and upload/move into private storage.
 2. Harden and test the background FFmpeg conversion, cleanup, retries, and unsupported-host fallback.
-3. Complete the protected media endpoint: re-check purchase entitlement on every request, validate token expiry, stream manifests and segments, and serve encryption keys only after authorization.
-4. Rewrite the `lvp-key://` playlist marker to the authorized key endpoint; do not expose key file paths.
-5. HLS.js/native playback integration and real-world access-denial tests on Apache, Nginx, and shared hosting.
+1. Run PHP syntax checks and confirm FFmpeg actually generates encrypted playlists/segments on the target host.
+2. Test browser playback on Safari and Chrome/Firefox (HLS.js), including long videos and seek operations.
+3. Test unauthorized, logged-out, expired-token, refunded/cancelled-order, missing-key, and missing-segment cases.
+4. Confirm direct HTTP access to the original MP4, HLS directory, and key file returns 403/404 on Apache, Nginx, and shared hosting; PHP endpoint checks alone cannot block direct web-server access if private storage is exposed.
 
 ## Data placement
 - Metadata and logs: dedicated prefixed tables in the site's WordPress database.
@@ -36,5 +39,5 @@ The plugin can detect capabilities and report limitations, but no plugin can gua
 
 
 ## Current shortcode status
-- `[lvp_secure_video id="123"]` checks that the visitor is logged in and has a qualifying WooCommerce order for a linked product. At this stage it intentionally displays a status message instead of video because the protected media endpoint and player integration are not complete.
+- `[lvp_secure_video id="123"]` checks the visitor's login and qualifying WooCommerce order, then requests the protected playlist endpoint. Replace `123` with the video ID in the library.
 - The legacy `[locked_video url="..."]` shortcode remains for compatibility and still uses a direct URL. It must not be used with public URLs for paid/protected content.
