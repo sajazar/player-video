@@ -20,6 +20,7 @@ final class LVP_Commercial_Foundation {
 		add_shortcode( 'lvp_secure_video', array( __CLASS__, 'secure_video_shortcode' ) );
 		add_action( 'admin_post_lvp_stream', array( __CLASS__, 'handle_stream_request' ) );
 		add_action( 'admin_post_nopriv_lvp_stream', array( __CLASS__, 'handle_stream_request' ) );
+		add_action( 'wp_ajax_lvp_refresh_token', array( __CLASS__, 'ajax_refresh_token' ) );
 		add_action( 'lvp_convert_video', array( __CLASS__, 'convert_video' ), 10, 1 );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
 	}
@@ -329,9 +330,35 @@ final class LVP_Commercial_Foundation {
 			admin_url( 'admin-post.php' )
 		);
 		$player_id = 'lvp-secure-' . wp_generate_uuid4();
-		$script = 'document.addEventListener("DOMContentLoaded",function(){var v=document.getElementById(' . wp_json_encode( $player_id ) . ');if(!v)return;var src=' . wp_json_encode( $stream_url ) . ';if(v.canPlayType("application/vnd.apple.mpegurl")){v.src=src;}else if(window.Hls&&Hls.isSupported()){var h=new Hls({enableWorker:true});h.loadSource(src);h.attachMedia(v);}else{v.insertAdjacentHTML("afterend","<p>مرورگر شما پخش HLS را پشتیبانی نمی‌کند.</p>");}});';
+		$ajax_url = admin_url( 'admin-ajax.php' );
+		$refresh_nonce = wp_create_nonce( 'lvp_refresh_token_' . $video_id );
+		$script = 'document.addEventListener("DOMContentLoaded",function(){var v=document.getElementById(' . wp_json_encode( $player_id ) . ');if(!v)return;var src=' . wp_json_encode( $stream_url ) . ';var ajaxUrl=' . wp_json_encode( $ajax_url ) . ';var videoId=' . absint( $video_id ) . ';var nonce=' . wp_json_encode( $refresh_nonce ) . ';var currentToken=' . wp_json_encode( $token ) . ';var h=null;var nativeHls=false;var refreshing=null;function withToken(url){try{var u=new URL(url,window.location.href);if(u.searchParams.get("action")==="lvp_stream"){u.searchParams.set("token",currentToken);}return u.toString();}catch(e){return url;}}function refreshToken(){if(refreshing)return refreshing;refreshing=fetch(ajaxUrl,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded; charset=UTF-8"},body:new URLSearchParams({action:"lvp_refresh_token",video_id:String(videoId),nonce:nonce}).toString()}).then(function(r){if(!r.ok)throw new Error("token refresh failed");return r.json();}).then(function(data){if(!data||!data.success||!data.data||!data.data.token)throw new Error("invalid token response");currentToken=data.data.token;if(nativeHls){var t=0;try{t=v.currentTime||0;}catch(e){}src=withToken(src);v.src=src;v.load();if(t>0){var restore=function(){try{v.currentTime=t;}catch(e){}v.removeEventListener("loadedmetadata",restore);};v.addEventListener("loadedmetadata",restore);}}return currentToken;}).catch(function(){return null;}).then(function(result){refreshing=null;return result;});return refreshing;}if(window.Hls&&Hls.isSupported()){h=new Hls({enableWorker:true,xhrSetup:function(xhr,url){var updated=withToken(url);if(updated!==url){try{xhr.open("GET",updated,true);}catch(e){}}}});h.loadSource(src);h.attachMedia(v);}else if(v.canPlayType("application/vnd.apple.mpegurl")){nativeHls=true;v.src=src;}else{v.insertAdjacentHTML("afterend","<p>مرورگر شما پخش HLS را پشتیبانی نمی‌کند.</p>");return;}window.setInterval(function(){refreshToken();},180000);});';
 		wp_add_inline_script( 'lvp-hls-js', $script, 'after' );
 		return '<div class="lvp-secure-player" data-video-id="' . esc_attr( $video_id ) . '"><video id="' . esc_attr( $player_id ) . '" controls playsinline preload="metadata" style="width:100%;height:auto;background:#000"></video></div>';
+	}
+
+
+	/**
+	 * Renew a playback token after re-checking the logged-in user's purchase.
+	 */
+	public static function ajax_refresh_token() {
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => 'ورود کاربر لازم است.' ), 401 );
+		}
+		$video_id = isset( $_POST['video_id'] ) ? absint( $_POST['video_id'] ) : 0;
+		if ( ! $video_id ) {
+			wp_send_json_error( array( 'message' => 'شناسه ویدئو نامعتبر است.' ), 400 );
+		}
+		check_ajax_referer( 'lvp_refresh_token_' . $video_id, 'nonce' );
+		$user_id = get_current_user_id();
+		if ( ! self::user_can_access_video( $video_id, $user_id ) ) {
+			wp_send_json_error( array( 'message' => 'دسترسی به ویدئو تأیید نشد.' ), 403 );
+		}
+		$token = self::create_playback_token( $video_id, $user_id, 300 );
+		if ( ! $token ) {
+			wp_send_json_error( array( 'message' => 'ساخت توکن جدید ناموفق بود.' ), 403 );
+		}
+		wp_send_json_success( array( 'token' => $token, 'expires_in' => 300 ) );
 	}
 
 	/**
