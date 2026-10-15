@@ -1,0 +1,391 @@
+/* استایل‌های پایه */
+.lvp-wrapper{ max-width:900px; margin:20px 0; position:relative; } 
+
+/* ** Aspect Ratio Container for Video + Overlay (16:9) ** */
+.lvp-wrapper .lvp-video-box {
+    position: relative;
+    width: 100%;
+    padding-top: 56.25% !important; 
+    height: 0 !important;
+    overflow: hidden; 
+    border-radius: 8px 8px 0 0; 
+}
+
+/* ** Video Base Style ** */
+.lvp-wrapper .lvp-video{ 
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100%; 
+    height: 100%;
+    display:block; 
+    background:#000; 
+    user-select:none;
+    object-fit: cover; 
+    box-sizing: border-box; 
+    transform: translate3d(0, 0, 0); 
+    will-change: transform;
+}
+
+/* *** لودینگ و قفل Overlay ها *** */
+.lvp-locked-overlay, .lvp-loading-overlay {
+    position:absolute; left:0; top:0; right:0; bottom:0;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,0.7); 
+    color:#fff; font-size:18px;
+    z-index:10000; 
+    pointer-events: auto; 
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+    border-radius: 8px 8px 0 0;
+}
+/* ** لوگوی واترماک ** */
+.lvp-watermark {
+    position: absolute;
+    top: 15px;      /* فاصله از بالا */
+    right: 15px;    /* فاصله از راست */
+    z-index: 1000;
+    pointer-events: none; /* مهم: برای اینکه کلیک روی لوگو، پخش ویدئو را مختل نکند */
+    opacity: 0.35;      /* شفافیت لوگو */
+    transition: opacity 0.3s;
+}
+.lvp-watermark img {
+    max-width: 100px; /* حداکثر عرض در دسکتاپ */
+    height: auto;
+    display: block;
+}
+
+.lvp-loading-overlay {
+    display: none; 
+    background: rgba(0, 0, 0, 0.4); 
+    z-index: 9999;
+}
+.lvp-spinner {
+    border: 4px solid #f3f3f3; 
+    border-top: 4px solid #2271b1; 
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.lvp-next-locked{ opacity:0.6; }
+.lvp-next-locked .lvp-video,
+.lvp-next-locked .lvp-play-button {
+    pointer-events: none !important;
+    cursor: not-allowed !important;
+}
+.lvp-next-locked .lvp-play-button {
+    opacity: 0.5;
+}
+
+/* استایل‌های نوار کنترل سفارشی */
+.lvp-custom-controls { 
+    display: flex; 
+    align-items: center; 
+    padding: 8px 15px; 
+    background: rgba(0,0,0,0.85); 
+    color: white; 
+    border-radius: 0 0 8px 8px; 
+    user-select: none;
+    line-height: 1;
+    flex-direction: row; /* دسکتاپ: یک ردیف افقی */
+}
+.lvp-controls-row {
+    display: flex; /* دسکتاپ: چیدمان افقی دکمه‌ها و تایم‌لاین */
+    align-items: center;
+    width: 100%;
+    direction: rtl; 
+    justify-content: flex-start;
+}
+.lvp-controls-row button, .lvp-controls-row a { 
+    background: none; 
+    border: none; 
+    color: white; 
+    cursor: pointer; 
+    font-size: 22px; 
+    padding: 0 8px; 
+    line-height: 1;
+    transition: color 0.2s;
+    text-decoration: none; 
+    display: flex; 
+    align-items: center;
+    justify-content: center;
+}
+.lvp-controls-row button:hover, .lvp-controls-row a:hover { color: #2271b1; }
+
+
+/* نمایش زمان: اجباری LTR برای خواندن زمان */
+.lvp-time { 
+    font-size: 14px; 
+    margin: 0 5px; 
+    min-width: 40px; 
+    text-align: left; 
+    direction: ltr; 
+}
+
+/* ** ۳. زمان جاری (Current Time) - دسکتاپ */
+.lvp-time-current-wrap {
+    font-size: 14px;
+    direction: ltr;
+    display: flex;
+    align-items: center;
+    order: 3; 
+    margin-right: 10px;
+}
+.lvp-time-current-wrap .lvp-time {
+    margin: 0;
+}
+
+/* ** ۵. نمایش زمان کل ویدئو (Duration) - دسکتاپ */
+.lvp-time-duration {
+    font-size: 14px;
+    direction: ltr;
+    display: flex;
+    align-items: center;
+    order: 5; 
+    margin-right: 10px; 
+    min-width: 45px; 
+}
+
+/* نوار پیشرفت (Timeline) - دسکتاپ */
+.lvp-progress { 
+    flex-grow: 1; 
+    height: 10px; 
+    background: #555; 
+    border-radius: 5px; 
+    cursor: pointer; 
+    position: relative; 
+    overflow: hidden;
+    direction: ltr; 
+    margin: 0 10px; 
+    order: 4; /* دسکتاپ: جایگاه اصلی در ردیف */
+}
+.lvp-progress-fill { 
+    height: 100%; 
+    background: #2271b1; 
+    width: 0%; 
+    pointer-events: none; 
+    position: absolute; 
+    left: 0; 
+    right: auto;
+}
+
+/* قفل نوار پیشرفت سفارشی */
+.lvp-timeline-lock-active .lvp-progress {
+    cursor: default;
+    pointer-events: none; 
+}
+
+/* ** ۲. کنترل صدا - دسکتاپ ** */
+.lvp-volume-control {
+    display: flex; 
+    align-items: center; 
+    order: 2; 
+    padding: 0 10px;
+    min-width: 100px;
+}
+.lvp-volume-control input[type="range"] {
+    -webkit-appearance: none;
+    margin: 0 0 0 5px; 
+    width: 60px;
+    height: 4px;
+    background: #555;
+    border-radius: 2px;
+    cursor: pointer;
+}
+.lvp-volume-control input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #2271b1;
+    cursor: pointer;
+}
+
+/* ۱. پخش و توقف - دسکتاپ */
+.lvp-play-button { 
+    order: 1; 
+    padding-right: 0; 
+}
+
+/* ۶. دکمه‌های تنظیم سرعت - دسکتاپ */
+.lvp-speed-button { 
+    order: 6; 
+    background: #333 !important;
+    color: white !important;
+    border: 1px solid #555 !important;
+    border-radius: 4px !important;
+    padding: 2px 8px !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    cursor: pointer;
+    min-width: 45px; 
+    margin-right: 8px; 
+    margin-left: 8px; 
+}
+
+/* ۷. دکمه دانلود - دسکتاپ */
+.lvp-download-button { 
+    order: 7; 
+    font-size: 20px !important; 
+    font-weight: bold;
+    color: #4CAF50 !important; 
+    margin-left: 10px;
+    border: 1px solid #4CAF50 !important;
+    border-radius: 4px;
+    padding: 2px 8px !important;
+    transition: background-color 0.2s, color 0.2s;
+}
+.lvp-download-button:hover {
+    background-color: #4CAF50;
+    color: white !important;
+}
+
+/* ** ۸. دکمه تمام صفحه (Full-Screen) - دسکتاپ ** */
+.lvp-fullscreen-button {
+    order: 8; 
+    margin-left: 10px;
+    padding: 0 8px; 
+    display: flex; 
+    align-items: center;
+    justify-content: center;
+}
+.lvp-fullscreen-button svg {
+    fill: white; 
+    width: 22px;
+    height: 22px;
+    transition: fill 0.2s;
+}
+.lvp-fullscreen-button:hover svg {
+    fill: #2271b1; 
+}
+
+/* ========================================================== */
+/* ** Control Bar Optimization for Mobile (Media Query) ** */
+/* ========================================================== */
+@media (max-width: 600px) {
+    /* تنظیمات موبایل برای لوگو */
+    .lvp-watermark {
+        top: 10px; 
+        right: 10px;
+    }
+    .lvp-watermark img {
+        max-width: 56px; /* 20 درصد کوچکتر شده */
+        height: auto; 
+    }
+    
+    /* کانتینر اصلی و ردیف دکمه‌ها */
+    .lvp-custom-controls { 
+        padding: 5px 8px; 
+    }
+    .lvp-controls-row {
+        flex-wrap: wrap; 
+        align-items: center; 
+        height: auto; 
+    }
+    
+    /* 1. جابجایی تایم‌لاین به ردیف بالا (اولین عنصر) */
+    .lvp-progress {
+        order: 1; 
+        width: 100%; 
+        margin: 0 0 8px 0 !important; 
+        height: 8px; 
+    }
+    
+    /* 2. ترتیب جدید دکمه‌ها در ردیف دوم */
+    .lvp-play-button { order: 2; padding-right: 0; }
+    
+    .lvp-volume-control { 
+        order: 3; 
+        min-width: 70px; 
+        padding: 0 3px; 
+    }
+    .lvp-volume-control input[type="range"] { 
+        width: 35px; 
+        margin: 0 0 0 3px; 
+    }
+    
+    .lvp-time-current-wrap { 
+        order: 4; 
+        font-size: 11px; 
+        min-width: 30px; 
+        margin-right: 5px; 
+    } 
+    .lvp-time-duration { 
+        order: 5; 
+        font-size: 11px; 
+        min-width: 30px; 
+        margin-right: 5px; 
+    }
+    
+    .lvp-speed-button { 
+        order: 6; 
+        font-size: 10px !important; 
+        padding: 1px 4px !important; 
+        min-width: 30px; 
+        margin-right: 4px; 
+        margin-left: 4px; 
+    }
+    
+    .lvp-download-button { 
+        order: 7; 
+        margin-left: 4px; 
+        font-size: 16px !important; 
+        padding: 1px 4px !important; 
+    }
+    
+    .lvp-fullscreen-button { 
+        order: 8; 
+        margin-left: 4px; 
+        padding: 0 4px; 
+    }
+    .lvp-fullscreen-button svg { 
+        width: 16px; 
+        height: 16px; 
+    }
+
+    .lvp-time {
+        margin: 0;
+    }
+    .lvp-controls-row button, .lvp-controls-row a { 
+        font-size: 16px; 
+        padding: 0 4px; 
+    }
+}
+
+
+/* ** بهینه‌سازی Fullscreen برای پر کردن کامل صفحه در موبایل ** */
+.lvp-wrapper:-webkit-full-screen { width: 100%; height: 100%; }
+.lvp-wrapper:-moz-full-screen { width: 100%; height: 100%; }
+.lvp-wrapper:-ms-fullscreen { width: 100%; height: 100%; }
+.lvp-wrapper:fullscreen { 
+    width: 100%; 
+    height: 100%; 
+    background: #000; 
+}
+.lvp-wrapper:fullscreen .lvp-video-box {
+    padding-top: 0 !important;
+    height: 100% !important;
+    width: 100% !important;
+    border-radius: 0;
+}
+.lvp-wrapper:fullscreen .lvp-video {
+    /* تضمین می‌کند که ویدئو در حالت تمام صفحه کادر را پر کند (حالت افقی) */
+    object-fit: contain; 
+}
+.lvp-wrapper:fullscreen .lvp-custom-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    z-index: 10001;
+    border-radius: 0;
+}
