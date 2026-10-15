@@ -17,7 +17,9 @@ final class LVP_Commercial_Foundation {
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
 		add_action( 'admin_post_lvp_upload_video', array( __CLASS__, 'handle_video_upload' ) );
 		add_action( 'admin_post_lvp_queue_conversion', array( __CLASS__, 'handle_queue_conversion' ) );
-		add_shortcode( 'lvp_secure_video', array( __CLASS__, 'secure_video_placeholder' ) );
+		add_shortcode( 'lvp_secure_video', array( __CLASS__, 'secure_video_shortcode' ) );
+		add_action( 'admin_post_lvp_stream', array( __CLASS__, 'handle_stream_request' ) );
+		add_action( 'admin_post_nopriv_lvp_stream', array( __CLASS__, 'handle_stream_request' ) );
 		add_action( 'lvp_convert_video', array( __CLASS__, 'convert_video' ), 10, 1 );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
 	}
@@ -300,16 +302,116 @@ final class LVP_Commercial_Foundation {
 		return hash_equals( hash_hmac( 'sha256', $payload, self::signing_secret() ), (string) $signature );
 	}
 
-	public static function secure_video_placeholder( $atts ) {
+	public static function secure_video_shortcode( $atts ) {
 		$atts = shortcode_atts( array( 'id' => 0 ), $atts, 'lvp_secure_video' );
 		$video_id = absint( $atts['id'] );
 		if ( ! is_user_logged_in() ) {
 			return '<p class="lvp-access-message">برای مشاهده این ویدئو ابتدا وارد حساب کاربری خود شوید.</p>';
 		}
-		if ( ! self::user_can_access_video( $video_id, get_current_user_id() ) ) {
-			return '<p class="lvp-access-message">دسترسی به این ویدئو تأیید نشد؛ لطفاً خرید دوره و وضعیت سفارش خود را بررسی کنید.</p>';
+		$user_id = get_current_user_id();
+		if ( ! self::user_can_access_video( $video_id, $user_id ) ) {
+			return '<p class="lvp-access-message">دسترسی به این ویدئو تأیید نشد؛ خرید دوره و وضعیت سفارش خود را بررسی کنید.</p>';
 		}
-		return '<p class="lvp-access-message">خرید شما تأیید شد؛ مسیر پخش امن هنوز در حال تکمیل است و این ویدئو فعلاً پخش نمی‌شود.</p>';
+		$token = self::create_playback_token( $video_id, $user_id, 300 );
+		if ( ! $token ) {
+			return '<p class="lvp-access-message">ساخت نشست پخش امن ناموفق بود؛ لطفاً صفحه را دوباره بارگذاری کنید.</p>';
+		}
+		wp_enqueue_script( 'lvp-hls-js', 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js', array(), '1.5.17', true );
+		$stream_url = add_query_arg(
+			array( 'action' => 'lvp_stream', 'kind' => 'playlist', 'video_id' => $video_id, 'token' => $token ),
+			admin_url( 'admin-post.php' )
+		);
+		$player_id = 'lvp-secure-' . wp_generate_uuid4();
+		$script = 'document.addEventListener("DOMContentLoaded",function(){var v=document.getElementById(' . wp_json_encode( $player_id ) . ');if(!v)return;var src=' . wp_json_encode( $stream_url ) . ';if(v.canPlayType("application/vnd.apple.mpegurl")){v.src=src;}else if(window.Hls&&Hls.isSupported()){var h=new Hls({enableWorker:true});h.loadSource(src);h.attachMedia(v);}else{v.insertAdjacentHTML("afterend","<p>مرورگر شما پخش HLS را پشتیبانی نمی‌کند.</p>");}});';
+		wp_add_inline_script( 'lvp-hls-js', $script, 'after' );
+		return '<div class="lvp-secure-player" data-video-id="' . esc_attr( $video_id ) . '"><video id="' . esc_attr( $player_id ) . '" controls playsinline preload="metadata" style="width:100%;height:auto;background:#000"></video></div>';
+	}
+
+	/**
+	 * Authenticated media delivery. Every manifest, segment and key request checks
+	 * the signed token, logged-in user and current WooCommerce entitlement.
+	 */
+	public static function handle_stream_request() {
+		$kind = isset( $_GET['kind'] ) ? sanitize_key( wp_unslash( $_GET['kind'] ) ) : '';
+		$video_id = isset( $_GET['video_id'] ) ? absint( $_GET['video_id'] ) : 0;
+		$token = isset( $_GET['token'] ) ? sanitize_text_field( wp_unslash( $_GET['token'] ) ) : '';
+		$user_id = get_current_user_id();
+		if ( ! is_user_logged_in() || ! $video_id || ! $token || ! self::verify_playback_token( $token, $video_id, $user_id ) || ! self::user_can_access_video( $video_id, $user_id ) ) {
+			self::stream_error( 403, 'دسترسی به پخش این ویدئو مجاز نیست.' );
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$video = $wpdb->get_row( $wpdb->prepare( "SELECT stream_path,conversion_status,status FROM {$table} WHERE id = %d", $video_id ) );
+		if ( ! $video || 'complete' !== $video->conversion_status || 'converted' !== $video->status ) {
+			self::stream_error( 404, 'ویدئو آماده پخش نیست.' );
+		}
+		$base = realpath( self::private_directory() );
+		if ( ! $base ) {
+			self::stream_error( 500, 'فضای ذخیره‌سازی خصوصی در دسترس نیست.' );
+		}
+		$hls_dir = realpath( trailingslashit( $base ) . 'hls-' . $video_id );
+		if ( ! $hls_dir || 0 !== strpos( $hls_dir, trailingslashit( $base ) ) || is_link( $hls_dir ) ) {
+			self::stream_error( 404, 'مسیر ویدئو پیدا نشد.' );
+		}
+		if ( 'playlist' === $kind ) {
+			$path = realpath( trailingslashit( $hls_dir ) . 'index.m3u8' );
+			if ( ! $path || ! is_file( $path ) ) {
+				self::stream_error( 404, 'فهرست پخش پیدا نشد.' );
+			}
+			$content = file_get_contents( $path );
+			if ( false === $content || false === strpos( $content, 'lvp-key://' . $video_id ) ) {
+				self::stream_error( 500, 'فهرست پخش رمزگذاری‌شده معتبر نیست.' );
+			}
+			$key_url = add_query_arg( array( 'action' => 'lvp_stream', 'kind' => 'key', 'video_id' => $video_id, 'token' => $token ), admin_url( 'admin-post.php' ) );
+			$content = str_replace( 'lvp-key://' . $video_id, esc_url_raw( $key_url ), $content );
+			$content = preg_replace_callback( '/^(segment_[a-zA-Z0-9_-]+\.ts)$/m', function( $matches ) use ( $video_id, $token ) {
+				return add_query_arg( array( 'action' => 'lvp_stream', 'kind' => 'segment', 'video_id' => $video_id, 'file' => $matches[1], 'token' => $token ), admin_url( 'admin-post.php' ) );
+			}, $content );
+			nocache_headers();
+			header( 'Content-Type: application/vnd.apple.mpegurl' );
+			header( 'Content-Disposition: inline; filename="stream.m3u8"' );
+			header( 'X-Content-Type-Options: nosniff' );
+			echo $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- HLS playlist generated by FFmpeg and URI lines rewritten above.
+			exit;
+		}
+		if ( 'key' === $kind ) {
+			$key_path = trailingslashit( $base ) . 'hls-' . $video_id . '.key';
+			if ( is_link( $key_path ) || ! is_file( $key_path ) || 16 !== filesize( $key_path ) ) {
+				self::stream_error( 404, 'کلید رمزگشایی پیدا نشد.' );
+			}
+			nocache_headers();
+			header( 'Content-Type: application/octet-stream' );
+			header( 'Content-Length: 16' );
+			header( 'X-Content-Type-Options: nosniff' );
+			readfile( $key_path );
+			exit;
+		}
+		if ( 'segment' === $kind ) {
+			$file = isset( $_GET['file'] ) ? sanitize_file_name( wp_unslash( $_GET['file'] ) ) : '';
+			if ( ! preg_match( '/^segment_[0-9]+\.ts$/', $file ) ) {
+				self::stream_error( 400, 'نام قطعه نامعتبر است.' );
+			}
+			$path = realpath( trailingslashit( $hls_dir ) . $file );
+			if ( ! $path || 0 !== strpos( $path, trailingslashit( $hls_dir ) ) || is_link( trailingslashit( $hls_dir ) . $file ) || ! is_file( $path ) ) {
+				self::stream_error( 404, 'قطعه ویدئو پیدا نشد.' );
+			}
+			nocache_headers();
+			header( 'Content-Type: video/mp2t' );
+			header( 'Content-Length: ' . filesize( $path ) );
+			header( 'X-Content-Type-Options: nosniff' );
+			readfile( $path );
+			exit;
+		}
+		self::stream_error( 400, 'نوع درخواست نامعتبر است.' );
+	}
+
+	private static function stream_error( $status, $message ) {
+		status_header( absint( $status ) );
+		nocache_headers();
+		header( 'Content-Type: text/plain; charset=UTF-8' );
+		header( 'X-Content-Type-Options: nosniff' );
+		echo esc_html( $message );
+		exit;
 	}
 
 	public static function convert_video( $video_id ) {
