@@ -15,6 +15,7 @@ This branch adds the first host-agnostic foundation without deleting the existin
 - Derives a per-install signing secret from the site's WordPress salts; it does not ship a fixed secret.
 - Adds Settings → وضعیت پلیر امن with a basic host capability report.
 - Detects FFmpeg and Action Scheduler availability where the host permits it.
+- Adds GitHub Actions checks for PHP syntax and a synthetic FFmpeg AES-128 HLS conversion smoke test.
 
 ## Important security status
 This is a foundation, not a complete secure streaming release. The legacy shortcode still outputs the supplied media URL directly. Do not treat public MP4 URLs as protected. Nginx and some managed/shared hosts do not honor .htaccess; a server-level access test is required before using the private directory for paid content.
