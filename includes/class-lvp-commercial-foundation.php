@@ -630,7 +630,7 @@ final class LVP_Commercial_Foundation {
 		if ( ! current_user_can( 'manage_options' ) || ! isset( $_GET['page'] ) || 'lvp-commercial-status' !== sanitize_key( wp_unslash( $_GET['page'] ) ) ) {
 			return;
 		}
-		echo '<div class="notice notice-warning"><p>شورت‌کد قدیمی هنوز URL مستقیم MP4 را در صفحه قرار می‌دهد. این نسخه پایه تجاری را اضافه می‌کند و هنوز پخش امن HLS را جایگزین نکرده است.</p></div>';
+		echo '<div class="notice notice-warning"><p>شورت‌کد قدیمی [locked_video] همچنان URL مستقیم را پخش می‌کند و برای محتوای پولی محافظت‌شده مناسب نیست. برای ویدئوی تبدیل‌شده از [lvp_secure_video id="شناسه"] استفاده کنید؛ پیش از انتشار، مسدود بودن دسترسی مستقیم به فایل‌های خصوصی را روی همین هاست آزمایش کنید.</p></div>';
 	}
 }
 register_activation_hook( dirname( __DIR__ ) . '/locked-video-player.php', array( 'LVP_Commercial_Foundation', 'activate' ) );
