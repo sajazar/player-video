@@ -487,7 +487,7 @@ final class LVP_Commercial_Foundation {
 			return;
 		}
 		@chmod( $key_info, 0600 );
-		$command = escapeshellarg( $ffmpeg ) . ' -nostdin -y -i ' . escapeshellarg( $source ) . ' -c:v h264 -c:a aac -hls_time 6 -hls_playlist_type vod -hls_key_info_file ' . escapeshellarg( $key_info ) . ' -hls_segment_filename ' . escapeshellarg( $segments ) . ' ' . escapeshellarg( $playlist ) . ' 2>&1';
+		$command = escapeshellarg( $ffmpeg ) . ' -nostdin -y -i ' . escapeshellarg( $source ) . ' -c:v libx264 -c:a aac -hls_time 6 -hls_playlist_type vod -hls_key_info_file ' . escapeshellarg( $key_info ) . ' -hls_segment_filename ' . escapeshellarg( $segments ) . ' ' . escapeshellarg( $playlist ) . ' 2>&1';
 		$output = array();
 		$status = 1;
 		@exec( $command, $output, $status );
