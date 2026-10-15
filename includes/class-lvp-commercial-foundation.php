@@ -16,6 +16,8 @@ final class LVP_Commercial_Foundation {
 		add_action( 'plugins_loaded', array( __CLASS__, 'maybe_upgrade' ) );
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
 		add_action( 'admin_post_lvp_upload_video', array( __CLASS__, 'handle_video_upload' ) );
+		add_action( 'admin_post_lvp_queue_conversion', array( __CLASS__, 'handle_queue_conversion' ) );
+		add_action( 'lvp_convert_video', array( __CLASS__, 'convert_video' ), 10, 1 );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
 	}
 
@@ -202,6 +204,90 @@ final class LVP_Commercial_Foundation {
 		self::redirect_library( 'uploaded' );
 	}
 
+	public static function handle_queue_conversion() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( 'اجازه انجام این عملیات را ندارید.' );
+		}
+		check_admin_referer( 'lvp_queue_conversion_action' );
+		$video_id = isset( $_POST['video_id'] ) ? absint( $_POST['video_id'] ) : 0;
+		if ( ! $video_id ) {
+			self::redirect_library( 'invalid_video' );
+		}
+		if ( ! function_exists( 'as_enqueue_async_action' ) ) {
+			self::redirect_library( 'queue_missing' );
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE id = %d", $video_id ) );
+		if ( ! $exists ) {
+			self::redirect_library( 'invalid_video' );
+		}
+		$wpdb->update( $table, array( 'conversion_status' => 'queued', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $video_id ), array( '%s', '%s' ), array( '%d' ) );
+		as_enqueue_async_action( 'lvp_convert_video', array( $video_id ), 'locked-video-player' );
+		self::redirect_library( 'conversion_queued' );
+	}
+
+	public static function convert_video( $video_id ) {
+		$video_id = absint( $video_id );
+		if ( ! $video_id || ! function_exists( 'exec' ) ) {
+			return;
+		}
+		$ffmpeg = self::ffmpeg_path();
+		if ( ! $ffmpeg ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$video = $wpdb->get_row( $wpdb->prepare( "SELECT id,source_path FROM {$table} WHERE id = %d", $video_id ) );
+		if ( ! $video || ! preg_match( '/^[a-zA-Z0-9._-]+\.mp4$/i', $video->source_path ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		$base = realpath( self::private_directory() );
+		$source = realpath( trailingslashit( self::private_directory() ) . $video->source_path );
+		if ( ! $base || ! $source || 0 !== strpos( $source, trailingslashit( $base ) ) || ! is_file( $source ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		$out_dir = trailingslashit( $base ) . 'hls-' . $video_id;
+		if ( ! is_dir( $out_dir ) && ! wp_mkdir_p( $out_dir ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		if ( ! is_writable( $out_dir ) || is_link( $out_dir ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		$playlist = trailingslashit( $out_dir ) . 'index.m3u8';
+		$segments = trailingslashit( $out_dir ) . 'segment_%05d.ts';
+		$command = escapeshellarg( $ffmpeg ) . ' -nostdin -y -i ' . escapeshellarg( $source ) . ' -c:v h264 -c:a aac -hls_time 6 -hls_playlist_type vod -hls_segment_filename ' . escapeshellarg( $segments ) . ' ' . escapeshellarg( $playlist ) . ' 2>&1';
+		$output = array();
+		$status = 1;
+		@exec( $command, $output, $status );
+		if ( 0 !== $status || ! is_file( $playlist ) || filesize( $playlist ) < 20 ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		@chmod( $playlist, 0640 );
+		foreach ( glob( trailingslashit( $out_dir ) . 'segment_*.ts' ) as $segment ) {
+			@chmod( $segment, 0640 );
+		}
+		$wpdb->update(
+			$table,
+			array( 'stream_path' => 'hls-' . $video_id . '/index.m3u8', 'conversion_status' => 'complete', 'status' => 'ready', 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $video_id ),
+			array( '%s', '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
+	private static function set_conversion_status( $video_id, $status ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$wpdb->update( $table, array( 'conversion_status' => sanitize_key( $status ), 'updated_at' => current_time( 'mysql' ) ), array( 'id' => absint( $video_id ) ), array( '%s', '%s' ), array( '%d' ) );
+	}
+
 	private static function redirect_library( $result ) {
 		wp_safe_redirect( add_query_arg( array( 'page' => 'lvp-video-library', 'lvp_result' => sanitize_key( $result ) ), admin_url( 'options-general.php' ) ) );
 		exit;
@@ -220,6 +306,9 @@ final class LVP_Commercial_Foundation {
 			'storage_error' => 'پوشه ذخیره‌سازی خصوصی قابل نوشتن نیست.',
 			'move_error' => 'انتقال فایل به پوشه خصوصی ناموفق بود.',
 			'db_error' => 'ثبت اطلاعات در دیتابیس ناموفق بود؛ فایل موقت حذف شد.',
+			'invalid_video' => 'ویدئوی انتخاب‌شده معتبر نیست.',
+			'queue_missing' => 'صف پردازش پس‌زمینه در این هاست موجود نیست؛ تبدیل خودکار فعال نشد.',
+			'conversion_queued' => 'درخواست تبدیل ثبت شد. وضعیت را بعداً در همین صفحه بررسی کنید.',
 		);
 		if ( isset( $_GET['lvp_result'] ) ) {
 			$key = sanitize_key( wp_unslash( $_GET['lvp_result'] ) );
@@ -243,7 +332,10 @@ final class LVP_Commercial_Foundation {
 		echo '<h2>ویدئوهای ثبت‌شده</h2><table class="widefat striped"><thead><tr><th>شناسه</th><th>عنوان</th><th>فایل خصوصی</th><th>محصول‌ها</th><th>وضعیت</th><th>تبدیل</th><th>تاریخ</th></tr></thead><tbody>';
 		if ( $videos ) {
 			foreach ( $videos as $video ) {
-				echo '<tr><td>' . absint( $video->id ) . '</td><td>' . esc_html( $video->title ) . '</td><td><code>' . esc_html( $video->source_path ) . '</code></td><td>' . esc_html( (string) $video->product_ids ) . '</td><td>' . esc_html( $video->status ) . '</td><td>' . esc_html( $video->conversion_status ) . '</td><td>' . esc_html( $video->created_at ) . '</td></tr>';
+				echo '<tr><td>' . absint( $video->id ) . '</td><td>' . esc_html( $video->title ) . '</td><td><code>' . esc_html( $video->source_path ) . '</code></td><td>' . esc_html( (string) $video->product_ids ) . '</td><td>' . esc_html( $video->status ) . '</td><td>' . esc_html( $video->conversion_status );
+				echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin-top:6px"><input type="hidden" name="action" value="lvp_queue_conversion"><input type="hidden" name="video_id" value="' . absint( $video->id ) . '">';
+				wp_nonce_field( 'lvp_queue_conversion_action' );
+				echo '<button class="button button-small" type="submit">درخواست تبدیل HLS</button></form></td><td>' . esc_html( $video->created_at ) . '</td></tr>';
 			}
 		} else {
 			echo '<tr><td colspan="7">هنوز ویدئویی ثبت نشده است.</td></tr>';
