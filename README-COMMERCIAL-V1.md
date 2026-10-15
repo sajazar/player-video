@@ -6,7 +6,7 @@ This branch adds the first host-agnostic foundation without deleting the existin
 - Creates dedicated WordPress tables for video metadata and security/event logs.
 - Creates an uploads-based private-storage directory and adds common Apache/IIS deny rules.
 - Adds an admin video library that accepts MP4 uploads and stores metadata/product IDs in the custom table.
-- Adds Action Scheduler-based FFmpeg HLS conversion when both are available.
+- Adds Action Scheduler-based FFmpeg HLS conversion when both are available; workers atomically claim queued jobs to avoid concurrent duplicate conversions.
 - Adds a database schema upgrade check for existing plugin installs.
 - Adds server-side WooCommerce entitlement checks for logged-in customers with processing/completed orders for linked products.
 - Adds a short-lived HMAC-signed playback token (5-minute default; maximum 10 minutes).
@@ -19,12 +19,12 @@ This branch adds the first host-agnostic foundation without deleting the existin
 ## Important security status
 This is a foundation, not a complete secure streaming release. The legacy shortcode still outputs the supplied media URL directly. Do not treat public MP4 URLs as protected. Nginx and some managed/shared hosts do not honor .htaccess; a server-level access test is required before using the private directory for paid content.
 
-The video library accepts MP4 files and can queue HLS conversion with FFmpeg + Action Scheduler. Conversion now requests AES-128 HLS encryption and stores the 16-byte key in the private storage directory. The playlist contains an internal `lvp-key://` marker that must be rewritten by the future authorized key endpoint. The branch now includes a PHP endpoint that rewrites the internal key marker and serves the manifest, segments, and key only after rechecking the logged-in user, short-lived token, and current WooCommerce entitlement. Use `[lvp_secure_video id="VIDEO_ID"]` with the numeric ID shown in the video library. However, this is still **not a production security certification**: do not merge into `main` until PHP syntax, FFmpeg encryption, browser playback, expired-token denial, refunded-order denial, and direct-path denial are tested on the target host. The HLS key is delivered to the authorized browser because playback requires it; AES-128 HLS is not DRM and cannot prevent screen recording or determined extraction.
+The video library accepts MP4 files and can queue HLS conversion with FFmpeg + Action Scheduler. Conversion requests AES-128 HLS encryption and stores the 16-byte key in the private storage directory. Before marking a video converted, the worker checks that FFmpeg produced an AES-128 manifest, the internal key marker, a valid 16-byte key, and at least one segment. The protected PHP endpoint rewrites the internal key marker and serves the manifest, segments, and key only after rechecking the logged-in user, short-lived token, and current WooCommerce entitlement. Duplicate queued jobs are guarded by an atomic worker claim. Use `[lvp_secure_video id="VIDEO_ID"]` with the numeric ID shown in the video library. However, this is still **not a production security certification**: do not merge into `main` until PHP syntax, FFmpeg encryption, browser playback, expired-token denial, refunded-order denial, and direct-path denial are tested on the target host. The HLS key is delivered to the authorized browser because playback requires it; AES-128 HLS is not DRM and cannot prevent screen recording or determined extraction.
 
 The next required implementation before commercial release is:
-1. Admin video library and upload/move into private storage.
-2. Harden and test the background FFmpeg conversion, cleanup, retries, and unsupported-host fallback.
-1. Run PHP syntax checks and confirm FFmpeg actually generates encrypted playlists/segments on the target host.
+1. Confirm FFmpeg actually generates encrypted playlists/segments on the target host, and test cleanup/retry behavior after failed conversions.
+2. Test long-video playback and token expiry. The current token is short-lived and does not yet auto-renew; a long video may stop requesting new segments after expiry.
+3. Run PHP syntax checks and test browser playback on Safari and Chrome/Firefox (HLS.js), including seek operations.
 2. Test browser playback on Safari and Chrome/Firefox (HLS.js), including long videos and seek operations.
 3. Test unauthorized, logged-out, expired-token, refunded/cancelled-order, missing-key, and missing-segment cases.
 4. Confirm direct HTTP access to the original MP4, HLS directory, and key file returns 403/404 on Apache, Nginx, and shared hosting; PHP endpoint checks alone cannot block direct web-server access if private storage is exposed.
