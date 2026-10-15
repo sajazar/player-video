@@ -275,7 +275,7 @@ final class LVP_Commercial_Foundation {
 		}
 		$wpdb->update(
 			$table,
-			array( 'stream_path' => 'hls-' . $video_id . '/index.m3u8', 'conversion_status' => 'complete', 'status' => 'ready', 'updated_at' => current_time( 'mysql' ) ),
+			array( 'stream_path' => 'hls-' . $video_id . '/index.m3u8', 'conversion_status' => 'complete', 'status' => 'converted', 'updated_at' => current_time( 'mysql' ) ),
 			array( 'id' => $video_id ),
 			array( '%s', '%s', '%s', '%s' ),
 			array( '%d' )
