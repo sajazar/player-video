@@ -7,6 +7,7 @@ This branch adds the first host-agnostic foundation without deleting the existin
 - Creates an uploads-based private-storage directory and adds common Apache/IIS deny rules.
 - Adds an admin video library that accepts MP4 uploads and stores metadata/product IDs in the custom table.
 - Adds Action Scheduler-based FFmpeg HLS conversion when both are available; workers atomically claim queued jobs to avoid concurrent duplicate conversions.
+- Allows retrying stale conversion jobs after 30 minutes and clears known previous HLS outputs before a retry; secret-file symlink paths fail closed.
 - Adds a database schema upgrade check for existing plugin installs.
 - Adds server-side WooCommerce entitlement checks for logged-in customers with processing/completed orders for linked products.
 - Adds a short-lived HMAC-signed playback token (5-minute default; maximum 10 minutes).
