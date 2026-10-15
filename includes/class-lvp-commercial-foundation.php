@@ -276,8 +276,7 @@ final class LVP_Commercial_Foundation {
 	}
 
 	/**
-	 * Create/verify short-lived signed playback claims. Tokens are not yet exposed
-	 * to a media endpoint in this foundation stage.
+	 * Create/verify short-lived signed playback claims for the protected media endpoint.
 	 */
 	public static function create_playback_token( $video_id, $user_id, $lifetime = 300 ) {
 		$video_id = absint( $video_id );
@@ -424,7 +423,7 @@ final class LVP_Commercial_Foundation {
 
 	public static function convert_video( $video_id ) {
 		$video_id = absint( $video_id );
-		if ( ! $video_id || ! function_exists( 'exec' ) ) {
+		if ( ! $video_id ) {
 			return;
 		}
 		global $wpdb;
