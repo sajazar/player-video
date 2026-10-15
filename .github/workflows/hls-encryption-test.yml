@@ -1,0 +1,40 @@
+name: HLS AES-128 conversion test
+
+on:
+  push:
+    branches:
+      - commercial-v1-foundation
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  hls-encryption:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Generate a short encrypted HLS fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          head -c 16 /dev/urandom > "$work/test.key"
+          iv="00000000000000000000000000000001"
+          printf 'lvp-key://123\n%s\n%s\n' "$work/test.key" "$iv" > "$work/keyinfo"
+          ffmpeg -hide_banner -loglevel error -nostdin -y \
+            -f lavfi -i "color=c=black:s=160x90:d=3" \
+            -an -c:v libx264 -preset ultrafast \
+            -hls_time 1 -hls_playlist_type vod \
+            -hls_key_info_file "$work/keyinfo" \
+            -hls_segment_filename "$work/segment_%05d.ts" \
+            "$work/index.m3u8"
+          grep -q 'METHOD=AES-128' "$work/index.m3u8"
+          grep -q 'lvp-key://123' "$work/index.m3u8"
+          test "$(wc -c < "$work/test.key")" -eq 16
+          compgen -G "$work/segment_*.ts" > /dev/null
+          echo "AES-128 HLS fixture generated successfully."
