@@ -14,6 +14,7 @@ final class LVP_Commercial_Foundation {
 
 	public static function boot() {
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
+		add_action( 'admin_post_lvp_upload_video', array( __CLASS__, 'handle_video_upload' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'legacy_notice' ) );
 	}
 
@@ -119,6 +120,128 @@ final class LVP_Commercial_Foundation {
 
 	public static function admin_menu() {
 		add_submenu_page( 'options-general.php', 'وضعیت پلیر امن', 'وضعیت پلیر امن', 'manage_options', 'lvp-commercial-status', array( __CLASS__, 'render_status_page' ) );
+		add_submenu_page( 'options-general.php', 'کتابخانه ویدئوهای امن', 'کتابخانه ویدئوهای امن', 'manage_options', 'lvp-video-library', array( __CLASS__, 'render_video_library' ) );
+	}
+
+	public static function handle_video_upload() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( 'اجازه انجام این عملیات را ندارید.' );
+		}
+		check_admin_referer( 'lvp_upload_video_action' );
+		if ( empty( $_FILES['lvp_video_file']['name'] ) || ! isset( $_FILES['lvp_video_file']['tmp_name'] ) ) {
+			self::redirect_library( 'missing_file' );
+		}
+		$file = $_FILES['lvp_video_file'];
+		if ( ! empty( $file['error'] ) || ! is_uploaded_file( $file['tmp_name'] ) ) {
+			self::redirect_library( 'upload_error' );
+		}
+		if ( ! empty( $file['size'] ) && $file['size'] > wp_max_upload_size() ) {
+			self::redirect_library( 'too_large' );
+		}
+
+		$checked = wp_check_filetype_and_ext( $file['tmp_name'], sanitize_file_name( $file['name'] ), array( 'mp4' => 'video/mp4' ) );
+		if ( empty( $checked['ext'] ) || 'mp4' !== strtolower( $checked['ext'] ) || empty( $checked['type'] ) || 'video/mp4' !== $checked['type'] ) {
+			self::redirect_library( 'invalid_type' );
+		}
+
+		$dir = self::private_directory();
+		if ( ! self::prepare_private_directory() || ! is_writable( $dir ) ) {
+			self::redirect_library( 'storage_error' );
+		}
+		$filename = wp_unique_filename( $dir, sanitize_file_name( $file['name'] ) );
+		$destination = trailingslashit( $dir ) . $filename;
+		if ( ! move_uploaded_file( $file['tmp_name'], $destination ) ) {
+			self::redirect_library( 'move_error' );
+		}
+		@chmod( $destination, 0640 );
+
+		$title = isset( $_POST['lvp_video_title'] ) ? sanitize_text_field( wp_unslash( $_POST['lvp_video_title'] ) ) : '';
+		if ( '' === $title ) {
+			$title = pathinfo( $filename, PATHINFO_FILENAME );
+		}
+		$product_ids = array();
+		if ( isset( $_POST['lvp_product_ids'] ) ) {
+			$raw_ids = preg_split( '/[,\s]+/', sanitize_text_field( wp_unslash( $_POST['lvp_product_ids'] ) ) );
+			foreach ( $raw_ids as $raw_id ) {
+				$id = absint( $raw_id );
+				if ( $id && get_post_type( $id ) === 'product' ) {
+					$product_ids[] = $id;
+				}
+			}
+		}
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$now = current_time( 'mysql' );
+		$inserted = $wpdb->insert(
+			$table,
+			array(
+				'title' => $title,
+				'source_path' => $filename,
+				'stream_path' => '',
+				'product_ids' => wp_json_encode( array_values( array_unique( $product_ids ) ) ),
+				'status' => 'pending',
+				'conversion_status' => 'not_started',
+				'duration' => 0,
+				'created_at' => $now,
+				'updated_at' => $now,
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+		if ( false === $inserted ) {
+			@unlink( $destination );
+			self::redirect_library( 'db_error' );
+		}
+		self::redirect_library( 'uploaded' );
+	}
+
+	private static function redirect_library( $result ) {
+		wp_safe_redirect( add_query_arg( array( 'page' => 'lvp-video-library', 'lvp_result' => sanitize_key( $result ) ), admin_url( 'options-general.php' ) ) );
+		exit;
+	}
+
+	public static function render_video_library() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		$messages = array(
+			'uploaded' => 'ویدئو در پوشه خصوصی ذخیره و اطلاعات آن ثبت شد؛ هنوز تبدیل HLS و پخش امن فعال نشده است.',
+			'missing_file' => 'فایل انتخاب نشده است.',
+			'upload_error' => 'بارگذاری فایل ناموفق بود.',
+			'too_large' => 'حجم فایل از محدودیت آپلود PHP/وردپرس بیشتر است.',
+			'invalid_type' => 'فعلاً فقط فایل MP4 معتبر پذیرفته می‌شود.',
+			'storage_error' => 'پوشه ذخیره‌سازی خصوصی قابل نوشتن نیست.',
+			'move_error' => 'انتقال فایل به پوشه خصوصی ناموفق بود.',
+			'db_error' => 'ثبت اطلاعات در دیتابیس ناموفق بود؛ فایل موقت حذف شد.',
+		);
+		if ( isset( $_GET['lvp_result'] ) ) {
+			$key = sanitize_key( wp_unslash( $_GET['lvp_result'] ) );
+			if ( isset( $messages[ $key ] ) ) {
+				echo '<div class="notice ' . ( 'uploaded' === $key ? 'notice-success' : 'notice-error' ) . '"><p>' . esc_html( $messages[ $key ] ) . '</p></div>';
+			}
+		}
+		echo '<div class="wrap"><h1>کتابخانه ویدئوهای امن</h1>';
+		echo '<p>فایل MP4 در مسیر خصوصی افزونه ذخیره می‌شود و URL عمومی در صفحه درج نمی‌شود. تا تکمیل تبدیل HLS و تست قوانین وب‌سرور، این بخش را سامانه پخش امن نهایی در نظر نگیرید.</p>';
+		echo '<h2>افزودن ویدئو</h2><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" enctype="multipart/form-data">';
+		echo '<input type="hidden" name="action" value="lvp_upload_video">';
+		wp_nonce_field( 'lvp_upload_video_action' );
+		echo '<table class="form-table"><tr><th><label for="lvp_video_title">عنوان ویدئو</label></th><td><input class="regular-text" id="lvp_video_title" name="lvp_video_title" type="text" maxlength="255"></td></tr>';
+		echo '<tr><th><label for="lvp_video_file">فایل MP4</label></th><td><input required id="lvp_video_file" name="lvp_video_file" type="file" accept=".mp4,video/mp4"><p class="description">حداکثر حجم فعلی: ' . esc_html( size_format( wp_max_upload_size() ) ) . '</p></td></tr>';
+		echo '<tr><th><label for="lvp_product_ids">شناسه محصول ووکامرس</label></th><td><input class="regular-text" id="lvp_product_ids" name="lvp_product_ids" type="text" placeholder="مثلاً 123 یا 123,456"><p class="description">اختیاری؛ فقط شناسه‌های معتبر محصول پذیرفته می‌شوند. کنترل دسترسی خرید در مرحله بعد اضافه می‌شود.</p></td></tr></table>';
+		echo '<p><button class="button button-primary" type="submit">ذخیره در فضای خصوصی</button></p></form>';
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		$videos = $wpdb->get_results( "SELECT id,title,source_path,product_ids,status,conversion_status,created_at FROM {$table} ORDER BY id DESC LIMIT 100" );
+		echo '<h2>ویدئوهای ثبت‌شده</h2><table class="widefat striped"><thead><tr><th>شناسه</th><th>عنوان</th><th>فایل خصوصی</th><th>محصول‌ها</th><th>وضعیت</th><th>تبدیل</th><th>تاریخ</th></tr></thead><tbody>';
+		if ( $videos ) {
+			foreach ( $videos as $video ) {
+				echo '<tr><td>' . absint( $video->id ) . '</td><td>' . esc_html( $video->title ) . '</td><td><code>' . esc_html( $video->source_path ) . '</code></td><td>' . esc_html( (string) $video->product_ids ) . '</td><td>' . esc_html( $video->status ) . '</td><td>' . esc_html( $video->conversion_status ) . '</td><td>' . esc_html( $video->created_at ) . '</td></tr>';
+			}
+		} else {
+			echo '<tr><td colspan="7">هنوز ویدئویی ثبت نشده است.</td></tr>';
+		}
+		echo '</tbody></table></div>';
 	}
 
 	public static function render_status_page() {
