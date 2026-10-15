@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Commercial V1 foundation. The legacy shortcode remains for backward compatibility;
 // do not treat a public MP4 URL as protected streaming.
-$ lvp_commercial_module = plugin_dir_path( __FILE__ ) . 'includes/class-lvp-commercial-foundation.php';
+$lvp_commercial_module = plugin_dir_path( __FILE__ ) . 'includes/class-lvp-commercial-foundation.php';
 if ( file_exists( $lvp_commercial_module ) ) {
 	require_once $lvp_commercial_module;
 }
