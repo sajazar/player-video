@@ -419,13 +419,24 @@ final class LVP_Commercial_Foundation {
 		if ( ! $video_id || ! function_exists( 'exec' ) ) {
 			return;
 		}
+		global $wpdb;
+		$table = $wpdb->prefix . 'lvp_videos';
+		// Atomically claim only a queued job. Duplicate Action Scheduler jobs then exit.
+		$claimed = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET conversion_status = 'processing', updated_at = %s WHERE id = %d AND conversion_status = 'queued'",
+				current_time( 'mysql' ),
+				$video_id
+			)
+		);
+		if ( 1 !== (int) $claimed ) {
+			return;
+		}
 		$ffmpeg = self::ffmpeg_path();
 		if ( ! $ffmpeg ) {
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
-		global $wpdb;
-		$table = $wpdb->prefix . 'lvp_videos';
 		$video = $wpdb->get_row( $wpdb->prepare( "SELECT id,source_path FROM {$table} WHERE id = %d", $video_id ) );
 		if ( ! $video || ! preg_match( '/^[a-zA-Z0-9._-]+\.mp4$/i', $video->source_path ) ) {
 			self::set_conversion_status( $video_id, 'failed' );
@@ -438,11 +449,15 @@ final class LVP_Commercial_Foundation {
 			return;
 		}
 		$out_dir = trailingslashit( $base ) . 'hls-' . $video_id;
+		if ( is_link( $out_dir ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
 		if ( ! is_dir( $out_dir ) && ! wp_mkdir_p( $out_dir ) ) {
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
-		if ( ! is_writable( $out_dir ) || is_link( $out_dir ) ) {
+		if ( ! is_writable( $out_dir ) ) {
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
@@ -452,7 +467,8 @@ final class LVP_Commercial_Foundation {
 		$key_info = trailingslashit( $out_dir ) . 'keyinfo.tmp';
 		$key = function_exists( 'random_bytes' ) ? random_bytes( 16 ) : false;
 		$iv = function_exists( 'random_bytes' ) ? bin2hex( random_bytes( 16 ) ) : '';
-		if ( false === $key || false === @file_put_contents( $key_path, $key, LOCK_EX ) ) {
+		if ( false === $key || false === $iv || false === @file_put_contents( $key_path, $key, LOCK_EX ) ) {
+			@unlink( $key_path );
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
@@ -469,13 +485,24 @@ final class LVP_Commercial_Foundation {
 		$status = 1;
 		@exec( $command, $output, $status );
 		@unlink( $key_info );
-		if ( 0 !== $status || ! is_file( $playlist ) || filesize( $playlist ) < 20 || ! is_file( $key_path ) || filesize( $key_path ) !== 16 ) {
+		$playlist_contents = is_file( $playlist ) ? file_get_contents( $playlist ) : false;
+		$segments_found = glob( trailingslashit( $out_dir ) . 'segment_*.ts' );
+		$valid_segments = is_array( $segments_found ) && ! empty( $segments_found );
+		if ( 0 !== $status || false === $playlist_contents || false === strpos( $playlist_contents, 'METHOD=AES-128' ) || false === strpos( $playlist_contents, 'lvp-key://' . $video_id ) || ! $valid_segments || ! is_file( $key_path ) || 16 !== filesize( $key_path ) ) {
+			@unlink( $key_info );
+			@unlink( $playlist );
+			@unlink( $key_path );
+			if ( is_array( $segments_found ) ) {
+				foreach ( $segments_found as $segment ) {
+					@unlink( $segment );
+				}
+			}
 			self::set_conversion_status( $video_id, 'failed' );
 			return;
 		}
 		@chmod( $playlist, 0640 );
-		// The manifest's lvp-key:// URI is an internal marker; a future authorized endpoint must rewrite it.
-		foreach ( glob( trailingslashit( $out_dir ) . 'segment_*.ts' ) as $segment ) {
+		// Only mark conversion complete when FFmpeg produced an AES-128 manifest and segments.
+		foreach ( $segments_found as $segment ) {
 			@chmod( $segment, 0640 );
 		}
 		$wpdb->update(
