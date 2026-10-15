@@ -221,11 +221,17 @@ final class LVP_Commercial_Foundation {
 		}
 		global $wpdb;
 		$table = $wpdb->prefix . 'lvp_videos';
-		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE id = %d", $video_id ) );
-		if ( ! $exists ) {
+		$video = $wpdb->get_row( $wpdb->prepare( "SELECT id,conversion_status FROM {$table} WHERE id = %d", $video_id ) );
+		if ( ! $video ) {
 			self::redirect_library( 'invalid_video' );
 		}
-		$wpdb->update( $table, array( 'conversion_status' => 'queued', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $video_id ), array( '%s', '%s' ), array( '%d' ) );
+		if ( 'processing' === $video->conversion_status ) {
+			self::redirect_library( 'conversion_running' );
+		}
+		$updated = $wpdb->update( $table, array( 'conversion_status' => 'queued', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $video_id ), array( '%s', '%s' ), array( '%d' ) );
+		if ( false === $updated ) {
+			self::redirect_library( 'queue_error' );
+		}
 		as_enqueue_async_action( 'lvp_convert_video', array( $video_id ), 'locked-video-player' );
 		self::redirect_library( 'conversion_queued' );
 	}
@@ -286,7 +292,9 @@ final class LVP_Commercial_Foundation {
 	}
 
 	public static function verify_playback_token( $token, $video_id, $user_id ) {
-		$decoded = base64_decode( strtr( (string) $token, '-_', '+/' ), true );
+		$encoded = strtr( (string) $token, '-_', '+/' );
+		$encoded .= str_repeat( '=', ( 4 - strlen( $encoded ) % 4 ) % 4 );
+		$decoded = base64_decode( $encoded, true );
 		if ( false === $decoded ) {
 			return false;
 		}
@@ -541,6 +549,8 @@ final class LVP_Commercial_Foundation {
 			'invalid_video' => 'ویدئوی انتخاب‌شده معتبر نیست.',
 			'queue_missing' => 'صف پردازش پس‌زمینه در این هاست موجود نیست؛ تبدیل خودکار فعال نشد.',
 			'conversion_queued' => 'درخواست تبدیل ثبت شد. وضعیت را بعداً در همین صفحه بررسی کنید.',
+			'conversion_running' => 'تبدیل این ویدئو در حال اجراست؛ برای جلوگیری از تداخل، درخواست تکراری ثبت نشد.',
+			'queue_error' => 'ثبت وضعیت صف تبدیل ناموفق بود؛ دوباره تلاش کنید.',
 		);
 		if ( isset( $_GET['lvp_result'] ) ) {
 			$key = sanitize_key( wp_unslash( $_GET['lvp_result'] ) );
@@ -555,7 +565,7 @@ final class LVP_Commercial_Foundation {
 		wp_nonce_field( 'lvp_upload_video_action' );
 		echo '<table class="form-table"><tr><th><label for="lvp_video_title">عنوان ویدئو</label></th><td><input class="regular-text" id="lvp_video_title" name="lvp_video_title" type="text" maxlength="255"></td></tr>';
 		echo '<tr><th><label for="lvp_video_file">فایل MP4</label></th><td><input required id="lvp_video_file" name="lvp_video_file" type="file" accept=".mp4,video/mp4"><p class="description">حداکثر حجم فعلی: ' . esc_html( size_format( wp_max_upload_size() ) ) . '</p></td></tr>';
-		echo '<tr><th><label for="lvp_product_ids">شناسه محصول ووکامرس</label></th><td><input class="regular-text" id="lvp_product_ids" name="lvp_product_ids" type="text" placeholder="مثلاً 123 یا 123,456"><p class="description">اختیاری؛ فقط شناسه‌های معتبر محصول پذیرفته می‌شوند. کنترل دسترسی خرید در مرحله بعد اضافه می‌شود.</p></td></tr></table>';
+		echo '<tr><th><label for="lvp_product_ids">شناسه محصول ووکامرس</label></th><td><input class="regular-text" id="lvp_product_ids" name="lvp_product_ids" type="text" placeholder="مثلاً 123 یا 123,456"><p class="description">برای پخش امن باید شناسه محصولی وارد شود که خریدار آن اجازه مشاهده ویدئو را داشته باشد؛ بدون محصول مرتبط، پخش مجاز نمی‌شود.</p></td></tr></table>';
 		echo '<p><button class="button button-primary" type="submit">ذخیره در فضای خصوصی</button></p></form>';
 
 		global $wpdb;
