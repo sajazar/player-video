@@ -472,8 +472,27 @@ final class LVP_Commercial_Foundation {
 		$segments = trailingslashit( $out_dir ) . 'segment_%05d.ts';
 		$key_path = trailingslashit( $base ) . 'hls-' . $video_id . '.key';
 		$key_info = trailingslashit( $out_dir ) . 'keyinfo.tmp';
-		$key = function_exists( 'random_bytes' ) ? random_bytes( 16 ) : false;
-		$iv = function_exists( 'random_bytes' ) ? bin2hex( random_bytes( 16 ) ) : '';
+		if ( is_link( $key_path ) || is_link( $key_info ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		// Remove this video's old outputs before retrying conversion.
+		@unlink( trailingslashit( $out_dir ) . 'index.m3u8' );
+		@unlink( $key_info );
+		foreach ( glob( trailingslashit( $out_dir ) . 'segment_*.ts' ) as $old_segment ) {
+			@unlink( $old_segment );
+		}
+		if ( file_exists( $key_path ) && ! @unlink( $key_path ) ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
+		try {
+			$key = random_bytes( 16 );
+			$iv = bin2hex( random_bytes( 16 ) );
+		} catch ( Throwable $e ) {
+			self::set_conversion_status( $video_id, 'failed' );
+			return;
+		}
 		if ( false === $key || false === $iv || false === @file_put_contents( $key_path, $key, LOCK_EX ) ) {
 			@unlink( $key_path );
 			self::set_conversion_status( $video_id, 'failed' );
