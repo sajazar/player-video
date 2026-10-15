@@ -23,11 +23,10 @@ The video library accepts MP4 files and can queue HLS conversion with FFmpeg + A
 
 The next required implementation before commercial release is:
 1. Confirm FFmpeg actually generates encrypted playlists/segments on the target host, and test cleanup/retry behavior after failed conversions.
-2. Test long-video playback and token expiry. The current token is short-lived and does not yet auto-renew; a long video may stop requesting new segments after expiry.
+2. Implement playback-token renewal and test long-video playback; the current token is short-lived and does not yet auto-renew, so long videos may stop requesting new segments after expiry.
 3. Run PHP syntax checks and test browser playback on Safari and Chrome/Firefox (HLS.js), including seek operations.
-2. Test browser playback on Safari and Chrome/Firefox (HLS.js), including long videos and seek operations.
-3. Test unauthorized, logged-out, expired-token, refunded/cancelled-order, missing-key, and missing-segment cases.
-4. Confirm direct HTTP access to the original MP4, HLS directory, and key file returns 403/404 on Apache, Nginx, and shared hosting; PHP endpoint checks alone cannot block direct web-server access if private storage is exposed.
+4. Test unauthorized, logged-out, expired-token, refunded/cancelled-order, missing-key, and missing-segment cases.
+5. Confirm direct HTTP access to the original MP4, HLS directory, and key file returns 403/404 on Apache, Nginx, and shared hosting; PHP endpoint checks alone cannot block direct web-server access if private storage is exposed.
 
 ## Data placement
 - Metadata and logs: dedicated prefixed tables in the site's WordPress database.
