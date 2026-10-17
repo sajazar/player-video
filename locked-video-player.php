@@ -140,7 +140,7 @@ function lvp_stream_endpoint() {
         }
         $context = stream_context_create(array('http' => array(
             'method' => 'GET',
-            'header' => implode("\\r\\n", $outHeaders),
+            'header' => implode("\r\n", $outHeaders),
             'timeout' => 30,
             'follow_location' => 0,
             'ignore_errors' => true,
