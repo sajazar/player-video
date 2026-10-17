@@ -82,9 +82,56 @@ function lvp_stream_endpoint() {
     }
 
     if (!function_exists('curl_init')) {
-        status_header(503);
-        header('Content-Type: text/plain; charset=utf-8');
-        echo 'پخش واسط در این سرور به فعال بودن cURL نیاز دارد.';
+        /* جایگزین بدون افزونه cURL با HTTP stream wrapper استاندارد PHP.
+         * در این حالت allow_url_fopen باید فعال باشد؛ اگر همهٔ transportهای خروجی
+         * روی هاست بسته باشند، PHP نمی‌تواند درخواست واسط را انجام دهد.
+         */
+        if (!filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
+            status_header(503);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'این هاست نه cURL دارد و نه PHP URL streams فعال است؛ پخش واسط ممکن نیست.';
+            exit;
+        }
+        while (ob_get_level()) { ob_end_clean(); }
+        @set_time_limit(0);
+        $range = isset($_SERVER['HTTP_RANGE']) ? trim($_SERVER['HTTP_RANGE']) : '';
+        $outHeaders = array('Accept: */*');
+        if ($range !== '' && preg_match('/^bytes=\\d*-\\d*(,\\d*-\\d*)*$/', $range)) {
+            $outHeaders[] = 'Range: ' . $range;
+        }
+        $context = stream_context_create(array('http' => array(
+            'method' => 'GET',
+            'header' => implode("\\r\\n", $outHeaders),
+            'timeout' => 30,
+            'follow_location' => 0,
+            'ignore_errors' => true,
+            'protocol_version' => 1.1,
+        )));
+        $remote = @fopen($url, 'rb', false, $context);
+        if (!$remote) { status_header(502); exit; }
+        $meta = stream_get_meta_data($remote);
+        foreach (($meta['wrapper_data'] ?? array()) as $line) {
+            $trimmed = trim($line);
+            if (preg_match('#^HTTP/\\S+\\s+(\\d{3})#i', $trimmed, $m)) {
+                http_response_code((int) $m[1]);
+            } elseif (stripos($trimmed, 'Content-Type:') === 0 ||
+                      stripos($trimmed, 'Content-Length:') === 0 ||
+                      stripos($trimmed, 'Content-Range:') === 0 ||
+                      stripos($trimmed, 'Accept-Ranges:') === 0 ||
+                      stripos($trimmed, 'Last-Modified:') === 0 ||
+                      stripos($trimmed, 'ETag:') === 0) {
+                header($trimmed, true);
+            } elseif (stripos($trimmed, 'Content-Disposition:') === 0) {
+                header('Content-Disposition: inline', true);
+            }
+        }
+        while (!feof($remote)) {
+            $chunk = fread($remote, 1024 * 1024);
+            if ($chunk === false) break;
+            echo $chunk;
+            flush();
+        }
+        fclose($remote);
         exit;
     }
 
