@@ -63,12 +63,51 @@ function lvp_register_stream_url($url) {
     return $key;
 }
 
+function lvp_stream_signature($key, $user_id, $expires) {
+    return hash_hmac('sha256', $key . '|' . (int) $user_id . '|' . (int) $expires, wp_salt('auth'));
+}
+
+function lvp_stream_url($key, $user_id) {
+    $expires = time() + DAY_IN_SECONDS;
+    return add_query_arg(array(
+        'lvp_stream' => $key,
+        'lvp_exp'    => $expires,
+        'lvp_uid'    => (int) $user_id,
+        'lvp_sig'    => lvp_stream_signature($key, $user_id, $expires),
+    ), home_url('/'));
+}
+
 function lvp_stream_endpoint() {
     if (empty($_GET['lvp_stream'])) return;
-    $key = sanitize_text_field(wp_unslash($_GET['lvp_stream']));
-    if (!preg_match('/^[a-f0-9]{64}$/', $key)) {
-        status_header(404); exit;
+
+    // Playback URLs are signed, short-lived, and bound to the logged-in WordPress account.
+    if (!is_user_logged_in()) {
+        status_header(403);
+        header('Cache-Control: no-store, private, max-age=0');
+        exit;
     }
+
+    $key = sanitize_text_field(wp_unslash($_GET['lvp_stream']));
+    $expires = isset($_GET['lvp_exp']) ? absint($_GET['lvp_exp']) : 0;
+    $signedUser = isset($_GET['lvp_uid']) ? absint($_GET['lvp_uid']) : 0;
+    $signature = isset($_GET['lvp_sig']) ? sanitize_text_field(wp_unslash($_GET['lvp_sig'])) : '';
+    $currentUser = get_current_user_id();
+
+    if (!preg_match('/^[a-f0-9]{64}$/', $key) ||
+        !$expires || $expires < time() || $expires > time() + DAY_IN_SECONDS ||
+        !$signedUser || $signedUser !== $currentUser ||
+        !preg_match('/^[a-f0-9]{64}$/', $signature) ||
+        !hash_equals(lvp_stream_signature($key, $signedUser, $expires), $signature)) {
+        status_header(403);
+        header('Cache-Control: no-store, private, max-age=0');
+        exit;
+    }
+
+    header('Cache-Control: no-store, private, max-age=0');
+    header('Pragma: no-cache');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Disposition: inline');
+
     $stored = get_option('lvp_stream_sources', array());
     $url = is_array($stored) && isset($stored[$key]) ? $stored[$key] : '';
     if (!$url || !hash_equals(lvp_get_stream_key($url), $key)) {
@@ -198,7 +237,10 @@ function lvp_shortcode($atts){
     if(empty($a['url'])) return '<p style="color:red">ویدئو مشخص نشده است.</p>';
     $streamKey = lvp_register_stream_url($a['url']);
     if (!$streamKey) return '<p style="color:red">آدرس ویدئو معتبر نیست.</p>';
-    $streamUrl = add_query_arg('lvp_stream', $streamKey, home_url('/'));
+    if (!is_user_logged_in()) {
+        return '<p class="lvp-auth-required">برای مشاهدهٔ این ویدئو ابتدا وارد حساب کاربری خود شوید.</p>';
+    }
+    $streamUrl = lvp_stream_url($streamKey, get_current_user_id());
 
     // استفاده از یک شمارنده ثابت برای تولید ID منحصر به فرد در هر پست
     static $counter=0;
