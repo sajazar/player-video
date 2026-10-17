@@ -39,6 +39,102 @@ function lvp_enqueue_assets() {
 }
 add_action('wp_enqueue_scripts','lvp_enqueue_assets');
 
+/**
+ * پخش آزمایشی از مسیر واسط سمت سرور.
+ * لینک مبدأ در HTML پلیر قرار نمی‌گیرد؛ درخواست‌های Range نیز عبور داده می‌شوند.
+ * توجه: این واسط لینک مبدأ را پنهان می‌کند، اما جلوی ضبط جریان ویدئو توسط ابزارها را تضمین نمی‌کند.
+ */
+function lvp_get_stream_key($url) {
+    return hash_hmac('sha256', $url, wp_salt('auth'));
+}
+
+function lvp_register_stream_url($url) {
+    $url = esc_url_raw(trim((string) $url));
+    if (!$url || !wp_http_validate_url($url)) return '';
+    $scheme = wp_parse_url($url, PHP_URL_SCHEME);
+    if (!in_array(strtolower((string) $scheme), array('http', 'https'), true)) return '';
+    $key = lvp_get_stream_key($url);
+    $stored = get_option('lvp_stream_sources', array());
+    if (!is_array($stored)) $stored = array();
+    if (!isset($stored[$key]) || $stored[$key] !== $url) {
+        $stored[$key] = $url;
+        update_option('lvp_stream_sources', $stored, false);
+    }
+    return $key;
+}
+
+function lvp_stream_endpoint() {
+    if (empty($_GET['lvp_stream'])) return;
+    $key = sanitize_text_field(wp_unslash($_GET['lvp_stream']));
+    if (!preg_match('/^[a-f0-9]{64}$/', $key)) {
+        status_header(404); exit;
+    }
+    $stored = get_option('lvp_stream_sources', array());
+    $url = is_array($stored) && isset($stored[$key]) ? $stored[$key] : '';
+    if (!$url || !hash_equals(lvp_get_stream_key($url), $key)) {
+        status_header(404); exit;
+    }
+
+    // جلوگیری از دسترسی به آدرس‌های داخلی/خصوصی برای کاهش خطر SSRF.
+    $host = wp_parse_url($url, PHP_URL_HOST);
+    if (!$host || preg_match('/^(localhost|.*\.localhost|.*\.local)$/i', $host)) {
+        status_header(403); exit;
+    }
+
+    if (!function_exists('curl_init')) {
+        status_header(503);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'پخش واسط در این سرور به فعال بودن cURL نیاز دارد.';
+        exit;
+    }
+
+    while (ob_get_level()) { ob_end_clean(); }
+    @set_time_limit(0);
+    $range = isset($_SERVER['HTTP_RANGE']) ? trim($_SERVER['HTTP_RANGE']) : '';
+    $ch = curl_init($url);
+    $requestHeaders = array('Accept: */*');
+    if ($range !== '' && preg_match('/^bytes=\d*-\d*(,\d*-\d*)*$/', $range)) {
+        $requestHeaders[] = 'Range: ' . $range;
+    }
+    curl_setopt_array($ch, array(
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 0,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HTTPHEADER => $requestHeaders,
+        CURLOPT_HEADERFUNCTION => function($curl, $line) {
+            $len = strlen($line);
+            $trimmed = trim($line);
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $trimmed, $m)) {
+                http_response_code((int) $m[1]);
+            } elseif (stripos($trimmed, 'Content-Type:') === 0 ||
+                      stripos($trimmed, 'Content-Length:') === 0 ||
+                      stripos($trimmed, 'Content-Range:') === 0 ||
+                      stripos($trimmed, 'Accept-Ranges:') === 0 ||
+                      stripos($trimmed, 'Last-Modified:') === 0 ||
+                      stripos($trimmed, 'ETag:') === 0) {
+                header($trimmed, true);
+            } elseif (stripos($trimmed, 'Content-Disposition:') === 0) {
+                header('Content-Disposition: inline', true);
+            }
+            return $len;
+        },
+        CURLOPT_WRITEFUNCTION => function($curl, $chunk) {
+            echo $chunk;
+            flush();
+            return strlen($chunk);
+        },
+    ));
+    curl_exec($ch);
+    $error = curl_errno($ch);
+    curl_close($ch);
+    if ($error && !headers_sent()) status_header(502);
+    exit;
+}
+add_action('init', 'lvp_stream_endpoint', 0);
+
+
 
 /**
  * ۲. شورت‌کد [locked_video] 
@@ -53,6 +149,9 @@ function lvp_shortcode($atts){
     ), $atts);
 
     if(empty($a['url'])) return '<p style="color:red">ویدئو مشخص نشده است.</p>';
+    $streamKey = lvp_register_stream_url($a['url']);
+    if (!$streamKey) return '<p style="color:red">آدرس ویدئو معتبر نیست.</p>';
+    $streamUrl = add_query_arg('lvp_stream', $streamKey, home_url('/'));
 
     // استفاده از یک شمارنده ثابت برای تولید ID منحصر به فرد در هر پست
     static $counter=0;
@@ -73,7 +172,7 @@ function lvp_shortcode($atts){
 
     <div class="lvp-video-box">
         <video class="lvp-video" <?php echo $controlsAttr;?> preload="metadata" playsinline oncontextmenu="return false;">
-            <source src="<?php echo esc_url($a['url']); ?>">
+            <source src="<?php echo esc_url($streamUrl); ?>">
             مرورگر شما از پخش ویدئو پشتیبانی نمی‌کند.
         </video>
         
@@ -115,7 +214,7 @@ function lvp_shortcode($atts){
                 // اگر download='true' باشد، دکمه دانلود پنهان است.
                 if($a['download'] === 'false'): 
                 ?>
-                    <a href="<?php echo esc_url($a['url']); ?>" class="lvp-download-button" download title="دانلود ویدئو">⏬</a>
+                    <a href="<?php echo esc_url($streamUrl); ?>" class="lvp-download-button" download title="دانلود ویدئو">⏬</a>
                 <?php endif; ?>
 
                 <button class="lvp-fullscreen-button" title="تمام صفحه">
